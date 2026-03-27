@@ -47,7 +47,7 @@ async function main() {
   const baseUrl = process.env.E2E_BASE_URL || `http://127.0.0.1:${port}`;
   const browserName = resolveBrowser(process.env.E2E_BROWSER || 'chromium');
 
-  const app = spawn('npm', ['run', 'dev', '--', '--hostname', '127.0.0.1', '--port', port], {
+  const app = spawn('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', port], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
     env: process.env,
