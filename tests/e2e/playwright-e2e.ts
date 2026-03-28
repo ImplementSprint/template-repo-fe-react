@@ -29,7 +29,8 @@ async function waitForServer(url: string, timeoutMs = 45_000): Promise<void> {
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const res = await fetch(url, { method: 'GET' });
-      if (res.ok) {
+      // A non-5xx response means the target is reachable for browser checks.
+      if (res.status < 500) {
         return;
       }
     } catch {
@@ -42,24 +43,45 @@ async function waitForServer(url: string, timeoutMs = 45_000): Promise<void> {
   throw new Error(`Timed out waiting for server at ${url}`);
 }
 
+function isLocalTarget(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+  } catch {
+    return url.includes('127.0.0.1') || url.includes('localhost');
+  }
+}
+
 async function main() {
   const port = process.env.PORT || '4173';
   const baseUrl = process.env.E2E_BASE_URL || `http://127.0.0.1:${port}`;
   const browserName = resolveBrowser(process.env.E2E_BROWSER || 'chromium');
+  const isLocalBaseUrl = isLocalTarget(baseUrl);
+  const timeoutMs = Number(process.env.E2E_WAIT_TIMEOUT_MS || (isLocalBaseUrl ? '45000' : '120000'));
+  let app: ReturnType<typeof spawn> | undefined;
 
-  const app = spawn('npm', ['run', 'dev', '--', '--hostname', '127.0.0.1', '--port', port], {
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
-    env: process.env,
-  });
+  if (isLocalBaseUrl) {
+    app = spawn('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', port], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+      env: process.env,
+    });
+  } else {
+    console.log(`Using remote E2E base URL: ${baseUrl}`);
+  }
 
   try {
-    await waitForServer(baseUrl);
+    await waitForServer(baseUrl, timeoutMs);
 
     const browser = await launchBrowser(browserName);
     const page = await browser.newPage();
 
-    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    const status = response?.status() ?? 0;
+    if (status >= 400) {
+      throw new Error(`E2E target responded with HTTP ${status}: ${baseUrl}`);
+    }
+
     const text = await page.textContent('body');
 
     if (!text || !text.includes('Get started by editing the App.tsx file')) {
@@ -69,7 +91,7 @@ async function main() {
     await browser.close();
     console.log(`Playwright smoke test passed on ${browserName}`);
   } finally {
-    app.kill();
+    app?.kill();
   }
 }
 
